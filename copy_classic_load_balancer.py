@@ -72,11 +72,10 @@ def alb_exist(load_balancer_name, region):
 # Describe the load balancer and retrieve attributes
 
 
-def get_elb_data(elb_name, region, profile):
+def get_elb_data(elb_name, region):
     if debug:
         print("Getting existing Classic ELB data")
-    session = boto3.Session(profile_name=profile)
-    elbc = session.client('elb', region_name=region)
+    elbc = boto3.client('elb', region_name=region)
     # Describes the specified the load balancer.
     try:
         describe_load_balancers = elbc.describe_load_balancers(
@@ -175,7 +174,7 @@ def passed_hardfailure_detector(elb_data):
                 error = True
 
         # 8. Check for backend authentication on HTTPS backend ports
-    if elb_data['LoadBalancerDescriptions'][0]['Policies']['OtherPolicies'] > 0:
+    if len(elb_data['LoadBalancerDescriptions'][0]['Policies']['OtherPolicies']) > 0:
         for policy in elb_data['LoadBalancerDescriptions'][0]['Policies']['OtherPolicies']:
             if 'BackendAuthenticationPolicy' in policy:
                 print("Error: The Classic load balancer has Backend HTTPS authentication.\
@@ -223,7 +222,8 @@ Your Application Load Balancer will be created with 7-day expiration period Dura
                 error = True
     # 3. Check for AWS reserved tag
     if len(elb_data['TagDescriptions']) > 0:
-        #this creates a copy of the list and allows us to iterate over the copy so we cand modify the original
+        # this creates a copy of the list and allows us to iterate over the
+        # copy so we cand modify the original
         for tag in elb_data['TagDescriptions'][0]['Tags'][:]:
             if tag['Key'].startswith('aws:'):
                 print("AWS reserved tag is in use. The aws: prefix in your tag names or \
@@ -263,41 +263,40 @@ def get_alb_data(elb_data, region, load_balancer_name):
     # this is used for building the listeners specs
     for elb_listener in elb_data['LoadBalancerDescriptions'][0]['ListenerDescriptions']:
         # If there is a LBCookieStickinessPolicy, append TG attriubtes
-        if len(elb_listener['PolicyNames']) > 0:
-            if 'LBCookieStickinessPolicy' in elb_listener['PolicyNames'][0]:
-                for policy in elb_data['PolicyDescriptions']:
-                    if elb_listener['PolicyNames'][0] == policy['PolicyName']:
-                        listener = {'Protocol': elb_listener['Listener']['Protocol'],
-                                    'Port': elb_listener['Listener']['LoadBalancerPort'],
-                                    'TargetGroup_Port': elb_listener['Listener']['InstancePort'],
-                                    'TargetGroup_Protocol': elb_listener['Listener']['InstanceProtocol']}
-                        TargetGroup_Attribute = {
-                            'dereg_timeout_seconds_delay': str(elb_data['LoadBalancerAttributes']['ConnectionDraining']['Timeout']),
-                            'stickiness.enabled': 'true',
-                            'stickiness.type': 'lb_cookie',
-                            'stickiness_policy': policy['PolicyName'].split('-')[3],
-                            'stickiness.lb_cookie.duration_seconds': policy['PolicyAttributeDescriptions'][0]['AttributeValue'],
-                            'TargetGroup_Port': elb_listener['Listener']['InstancePort']
-                        }
-                        if listener['Protocol'] == "HTTPS":
-                            listener['Certificates'] = [
-                                {'CertificateArn': elb_listener['Listener']['SSLCertificateId']}]
-            else:
-                listener = {'Protocol': elb_listener['Listener']['Protocol'],
-                            'Port': elb_listener['Listener']['LoadBalancerPort'],
-                            'TargetGroup_Port': elb_listener['Listener']['InstancePort'],
-                            'TargetGroup_Protocol': elb_listener['Listener']['InstanceProtocol']}
-                TargetGroup_Attribute = {
-                    'dereg_timeout_seconds_delay': str(elb_data['LoadBalancerAttributes']['ConnectionDraining']['Timeout']),
-                    'TargetGroup_Port': elb_listener['Listener']['InstancePort']
-                }
-                if listener['Protocol'] == "HTTPS":
-                    listener['Certificates'] = [
-                        {'CertificateArn': elb_listener['Listener']['SSLCertificateId']}]
-            # TGs is not per unique backend port as two TGs might have two
-            # different stickiness policy
-            alb_data['listeners'].append(listener)
-            alb_data['target_group_attributes'].append(TargetGroup_Attribute)
+        if len(elb_listener['PolicyNames']) > 0 and 'LBCookieStickinessPolicy' in elb_listener['PolicyNames'][0]:
+            for policy in elb_data['PolicyDescriptions']:
+                if elb_listener['PolicyNames'][0] == policy['PolicyName']:
+                    listener = {'Protocol': elb_listener['Listener']['Protocol'],
+                                'Port': elb_listener['Listener']['LoadBalancerPort'],
+                                'TargetGroup_Port': elb_listener['Listener']['InstancePort'],
+                                'TargetGroup_Protocol': elb_listener['Listener']['InstanceProtocol']}
+                    TargetGroup_Attribute = {
+                        'dereg_timeout_seconds_delay': str(elb_data['LoadBalancerAttributes']['ConnectionDraining']['Timeout']),
+                        'stickiness.enabled': 'true',
+                        'stickiness.type': 'lb_cookie',
+                        'stickiness_policy': policy['PolicyName'].split('-')[3],
+                        'stickiness.lb_cookie.duration_seconds': policy['PolicyAttributeDescriptions'][0]['AttributeValue'],
+                        'TargetGroup_Port': elb_listener['Listener']['InstancePort']
+                    }
+                    if listener['Protocol'] == "HTTPS":
+                        listener['Certificates'] = [
+                            {'CertificateArn': elb_listener['Listener']['SSLCertificateId']}]
+        else:
+            listener = {'Protocol': elb_listener['Listener']['Protocol'],
+                        'Port': elb_listener['Listener']['LoadBalancerPort'],
+                        'TargetGroup_Port': elb_listener['Listener']['InstancePort'],
+                        'TargetGroup_Protocol': elb_listener['Listener']['InstanceProtocol']}
+            TargetGroup_Attribute = {
+                'dereg_timeout_seconds_delay': str(elb_data['LoadBalancerAttributes']['ConnectionDraining']['Timeout']),
+                'TargetGroup_Port': elb_listener['Listener']['InstancePort']
+            }
+            if listener['Protocol'] == "HTTPS":
+                listener['Certificates'] = [
+                    {'CertificateArn': elb_listener['Listener']['SSLCertificateId']}]
+        # TGs is not per unique backend port as two TGs might have two
+        # different stickiness policy
+        alb_data['listeners'].append(listener)
+        alb_data['target_group_attributes'].append(TargetGroup_Attribute)
     # this is used for building the target groups
     '''
     # We need to create more target group if ELB front port has Duration-Based sticky policy
@@ -520,8 +519,6 @@ def main():
         description='Create an Application Load Balancer from a Classic load balancer', usage='%(prog)s --name <elb name> --region')
     parser.add_argument(
         "--name", help="The name of the Classic load balancer", required=True)
-    parser.add_argument(
-        "--profile", help="The credentials profile name to use", required=False, default=None)
     parser.add_argument("--region", help="The region of the Classic load balancer (will also be used for the Application Load Balancer)",
                         required=True)
     parser.add_argument("--debug", help="debug mode", action='store_true')
@@ -548,11 +545,10 @@ with Application Load Balancers, but do not perform create operations",
     global client
     session = botocore.session.get_session()
     session.user_agent_name = 'CopyClassicLoadBalancer/' + VERSION
-    session.set_config_variable('profile', args.profile)
     client = session.create_client('elbv2', region_name=region)
 
     # Obtain ELB data
-    elb_data = get_elb_data(load_balancer_name, region, args.profile)
+    elb_data = get_elb_data(load_balancer_name, region)
     # validate that an existing ALB with same name does not exist
     if alb_exist(load_balancer_name, region):
         print('An Application Load Balancer currently exists with the name {} in {}'.format(
